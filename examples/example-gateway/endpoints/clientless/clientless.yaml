@@ -1,0 +1,23 @@
+endpointId: clientless
+endpointType: http
+handleId: beta
+qpsLevel: 2
+middlewares:
+  - name: transformClientlessReq
+    options:
+      transforms:
+        - from: Request.FirstName
+          override: true
+          to: FirstName
+        - from: Request.LastName
+          override: true
+          to: LastName1
+reqHeaderMap: {}
+resHeaderMap: {}
+testFixtures: {}
+thriftFile: endpoints/clientless/clientless.thrift
+thriftFileSha: '{{placeholder}}'
+thriftMethodName: Clientless::beta
+type: http
+workflowType: clientless
+

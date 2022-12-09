@@ -1,0 +1,424 @@
+{{- /* template to render edge gateway tchannel client code */ -}}
+{{- $instance := .Instance }}
+package {{$instance.PackageInfo.PackageName}}
+
+import (
+	"context"
+	"errors"
+	"strconv"
+	"strings"
+	"time"
+	"net/textproto"
+
+	"github.com/afex/hystrix-go/hystrix"
+	"github.com/uber/tchannel-go"
+	zanzibar "github.com/uber/zanzibar/runtime"
+	"github.com/uber/tchannel-go"
+	"github.com/uber/zanzibar/config"
+	"github.com/uber/zanzibar/runtime/ruleengine"
+
+
+	"go.uber.org/zap"
+
+	module "{{$instance.PackageInfo.ModulePackagePath}}"
+	{{range $idx, $pkg := .IncludedPackages -}}
+	{{$pkg.AliasName}} "{{$pkg.PackageName}}"
+	{{end}}
+)
+
+{{$clientID := .ClientID -}}
+{{$exposedMethods := .ExposedMethods -}}
+{{$QPSLevels := .QPSLevels -}}
+{{- $clientName := printf "%sClient" (camel $clientID) }}
+{{- $exportName := .ExportName}}
+{{- $sidecarRouter := .SidecarRouter}}
+
+// CircuitBreakerConfigKey is key value for qps level to circuit breaker parameters mapping
+const CircuitBreakerConfigKey = "circuitbreaking-configurations"
+
+// Client defines {{$clientID}} client interface.
+type Client interface {
+{{range $svc := .Services -}}
+{{range .Methods}}
+{{$serviceMethod := printf "%s::%s" $svc.Name .Name -}}
+{{$methodName := (title (index $exposedMethods $serviceMethod)) -}}
+{{- if $methodName -}}
+	{{$methodName}}(
+		ctx context.Context,
+		reqHeaders map[string]string,
+		{{if ne .RequestType "" -}}
+		args {{.RequestType}},
+		{{end -}}
+		timeoutAndRetryCfg *zanzibar.TimeoutAndRetryOptions,
+	) (context.Context, {{- if ne .ResponseType "" -}} {{.ResponseType}}, {{- end -}}map[string]string, error)
+{{- end -}}
+{{- end -}}
+{{- end -}}
+}
+
+// NewClient returns a new TChannel client for service {{$clientID}}.
+func {{$exportName}}(deps *module.Dependencies) Client {
+	{{- /* this is the service discovery service name */}}
+	serviceName := deps.Default.Config.MustGetString("clients.{{$clientID}}.serviceName")
+	var routingKey string
+	if deps.Default.Config.ContainsKey("clients.{{$clientID}}.routingKey") {
+		routingKey = deps.Default.Config.MustGetString("clients.{{$clientID}}.routingKey")
+	}
+	var requestUUIDHeaderKey string
+	if deps.Default.Config.ContainsKey("tchannel.clients.requestUUIDHeaderKey") {
+		requestUUIDHeaderKey = deps.Default.Config.MustGetString("tchannel.clients.requestUUIDHeaderKey")
+	}
+
+	{{if $sidecarRouter -}}
+		ip := deps.Default.Config.MustGetString("sidecarRouter.{{$sidecarRouter}}.tchannel.ip")
+		port := deps.Default.Config.MustGetInt("sidecarRouter.{{$sidecarRouter}}.tchannel.port")
+	{{else -}}
+		ip := deps.Default.Config.MustGetString("clients.{{$clientID}}.ip")
+		port := deps.Default.Config.MustGetInt("clients.{{$clientID}}.port")
+	{{end -}}
+
+	gateway := deps.Default.Gateway
+	var channel *tchannel.Channel
+
+	// If dedicated.tchannel.client : true, each tchannel client will create a
+	// dedicated connection with local sidecar, else it will use a shared connection
+	if deps.Default.Config.ContainsKey("dedicated.tchannel.client") &&
+		deps.Default.Config.MustGetBoolean("dedicated.tchannel.client") {
+		channel = gateway.SetupClientTChannel(deps.Default.Config, serviceName)
+		channel.Peers().Add(ip + ":" + strconv.Itoa(int(port)))
+	} else {
+		channel = gateway.ServerTChannel
+		channel.GetSubChannel(serviceName, tchannel.Isolated).Peers().Add(ip + ":" + strconv.Itoa(int(port)))
+	}
+
+	/*Ex:
+	{
+		"clients.rider-presentation.alternates": {
+			"routingConfigs": [
+				{
+					"headerName": "x-test-env",
+					"headerValue": "*",
+					"serviceName": "testservice"
+				},
+				{
+					"headerName": "x-container",
+					"headerValue": "container*",
+					"serviceName": "relayer"
+				}
+			],
+			"servicesDetail": {
+				"testservice": {
+					"ip": "127.0.0.1",
+					"port": 5000
+				},
+				"relayer": {
+					"ip": "127.0.0.1",
+					"port": 12000
+				}
+			}
+		}
+	}*/
+	var re ruleengine.RuleEngine
+	var headerPatterns []string
+	altChannelMap  := make(map[string]*tchannel.SubChannel)
+	headerPatterns, re = initializeDynamicChannel(channel, deps, headerPatterns, altChannelMap, re)
+
+	timeoutVal := int(deps.Default.Config.MustGetInt("clients.{{$clientID}}.timeout"))
+	timeout := time.Millisecond * time.Duration(
+		timeoutVal,
+	)
+	timeoutPerAttempt := time.Millisecond * time.Duration(
+		deps.Default.Config.MustGetInt("clients.{{$clientID}}.timeoutPerAttempt"),
+	)
+
+	methodNames := map[string]string{
+		{{range $svc := .Services -}}
+		{{range .Methods -}}
+		{{$serviceMethod := printf "%s::%s" $svc.Name .Name -}}
+		{{$methodName := (title (index $exposedMethods $serviceMethod)) -}}
+			{{if $methodName -}}
+			"{{$serviceMethod}}": "{{$methodName}}",
+			{{end -}}
+		{{ end -}}
+		{{ end -}}
+	}
+
+	//get mapping of client method and it's timeout
+	//if mapping is not provided, use client's timeout for all the methods
+	clientMethodTimeoutMapping := make(map[string]int64)
+	if deps.Default.Config.ContainsKey("clients.{{$clientID}}.methodTimeoutMapping") {
+		deps.Default.Config.MustGetStruct("clients.{{$clientID}}.methodTimeoutMapping", &clientMethodTimeoutMapping)
+	} else {
+		for _, methodName := range methodNames {
+			clientMethodTimeoutMapping[methodName] = int64(timeoutVal)
+		}
+	}
+
+	qpsLevels := map[string]string{
+				{{range $methodName, $qpsLevel := $QPSLevels -}}
+				"{{$methodName}}": "{{$qpsLevel}}",
+				{{end}}
+	}
+
+	// circuitBreakerDisabled sets whether circuit-breaker should be disabled
+	circuitBreakerDisabled := false
+	if deps.Default.Config.ContainsKey("clients.{{$clientID}}.circuitBreakerDisabled") {
+		circuitBreakerDisabled = deps.Default.Config.MustGetBoolean("clients.{{$clientID}}.circuitBreakerDisabled")
+	}
+
+	if !circuitBreakerDisabled {
+		for methodName, methodTimeoutVal := range clientMethodTimeoutMapping{
+			circuitBreakerName := "{{$clientID}}" + "-" + methodName
+			qpsLevel := "default"
+			if level, ok := qpsLevels[circuitBreakerName]; ok {
+				qpsLevel = level
+			}
+			configureCircuitBreaker(deps, int(methodTimeoutVal), circuitBreakerName, qpsLevel)
+		}
+	}
+
+	var client *zanzibar.TChannelClient
+
+	if  deps.Default.Config.ContainsKey("tchannelclients.retryCount.feature.enabled") && deps.Default.Config.MustGetBoolean("tchannelclients.retryCount.feature.enabled") && deps.Default.Config.ContainsKey("clients.{{$clientID}}.retryCount") && int(deps.Default.Config.MustGetInt("clients.{{$clientID}}.retryCount")) > 0{
+		maxAttempts := int(deps.Default.Config.MustGetInt("clients.{{$clientID}}.retryCount"))
+		client = zanzibar.NewTChannelClientContext(
+				channel,
+				deps.Default.ContextLogger,
+				deps.Default.ContextMetrics,
+				deps.Default.ContextExtractor,
+				&zanzibar.TChannelClientOption{
+					ServiceName:          serviceName,
+					ClientID:             "{{$clientID}}",
+					MethodNames:          methodNames,
+					Timeout:              timeout,
+					TimeoutPerAttempt:    timeoutPerAttempt,
+					RoutingKey:           &routingKey,
+					RuleEngine:           re,
+					HeaderPatterns:       headerPatterns,
+					RequestUUIDHeaderKey: requestUUIDHeaderKey,
+					AltChannelMap:        altChannelMap,
+					MaxAttempts:          maxAttempts,
+				},
+			)
+	}else{
+		client = zanzibar.NewTChannelClientContext(
+				channel,
+				deps.Default.ContextLogger,
+				deps.Default.ContextMetrics,
+				deps.Default.ContextExtractor,
+				&zanzibar.TChannelClientOption{
+					ServiceName:          serviceName,
+					ClientID:             "{{$clientID}}",
+					MethodNames:          methodNames,
+					Timeout:              timeout,
+					TimeoutPerAttempt:    timeoutPerAttempt,
+					RoutingKey:           &routingKey,
+					RuleEngine:           re,
+					HeaderPatterns:       headerPatterns,
+					RequestUUIDHeaderKey: requestUUIDHeaderKey,
+					AltChannelMap:        altChannelMap,
+				},
+			)
+	}
+
+	return &{{$clientName}}{
+		client: client,
+		circuitBreakerDisabled: circuitBreakerDisabled,
+		defaultDeps:            deps.Default,
+	}
+}
+
+func initializeDynamicChannel(channel *tchannel.Channel, deps *module.Dependencies, headerPatterns []string, altChannelMap map[string]*tchannel.SubChannel, re ruleengine.RuleEngine) ([]string, ruleengine.RuleEngine) {
+	if deps.Default.Config.ContainsKey("clients.{{$clientID}}.alternates") {
+		var alternateServiceDetail config.AlternateServiceDetail
+		deps.Default.Config.MustGetStruct("clients.{{$clientID}}.alternates", &alternateServiceDetail)
+
+		ruleWrapper := ruleengine.RuleWrapper{}
+		for _, routingConfig := range alternateServiceDetail.RoutingConfigs {
+			ruleValue := []string{routingConfig.ServiceName}
+			rd := routingConfig.RoutingDelegate
+			if rd != nil {
+				ruleValue = append(ruleValue, *rd)
+			}
+			rawRule := ruleengine.RawRule{Patterns: []string{textproto.CanonicalMIMEHeaderKey(routingConfig.HeaderName),
+				strings.ToLower(routingConfig.HeaderValue)}, Value: ruleValue}
+			headerPatterns = append(headerPatterns, textproto.CanonicalMIMEHeaderKey(routingConfig.HeaderName))
+			ruleWrapper.Rules = append(ruleWrapper.Rules, rawRule)
+
+			scAlt := channel.GetSubChannel(routingConfig.ServiceName, tchannel.Isolated)
+			serviceRouting, ok := alternateServiceDetail.ServicesDetailMap[routingConfig.ServiceName]
+			if !ok {
+				panic("service routing mapping incorrect for service: " + routingConfig.ServiceName)
+			}
+			scAlt.Peers().Add(serviceRouting.IP + ":" + strconv.Itoa(serviceRouting.Port))
+			altChannelMap[routingConfig.ServiceName] = scAlt
+		}
+
+		re = ruleengine.NewRuleEngine(ruleWrapper)
+	}
+	return headerPatterns, re
+}
+
+// CircuitBreakerConfig is used for storing the circuit breaker parameters for each qps level
+type CircuitBreakerConfig struct {
+	Parameters map[string]map[string]int
+}
+
+func configureCircuitBreaker(deps *module.Dependencies, timeoutVal int, circuitBreakerName string, qpsLevel string) {
+	// sleepWindowInMilliseconds sets the amount of time, after tripping the circuit,
+	// to reject requests before allowing attempts again to determine if the circuit should again be closed
+	sleepWindowInMilliseconds := 5000
+	// maxConcurrentRequests sets how many requests can be run at the same time, beyond which requests are rejected
+	maxConcurrentRequests := 20
+	// errorPercentThreshold sets the error percentage at or above which the circuit should trip open
+	errorPercentThreshold := 20
+	// requestVolumeThreshold sets a minimum number of requests that will trip the circuit in a rolling window of 10s
+	// For example, if the value is 20, then if only 19 requests are received in the rolling window of 10 seconds
+	// the circuit will not trip open even if all 19 failed.
+	requestVolumeThreshold := 20
+	// parses circuit breaker configurations
+	if deps.Default.Config.ContainsKey(CircuitBreakerConfigKey) {
+		var config CircuitBreakerConfig
+		deps.Default.Config.MustGetStruct(CircuitBreakerConfigKey, &config)
+		parameters := config.Parameters
+		// first checks if level exists in configurations then assigns parameters
+		// if "default" qps level assigns default parameters from circuit breaker configurations
+		if settings, ok := parameters[qpsLevel]; ok {
+			if sleep, ok := settings["sleepWindowInMilliseconds"]; ok {
+				sleepWindowInMilliseconds = sleep
+			}
+			if max, ok := settings["maxConcurrentRequests"]; ok {
+				maxConcurrentRequests = max
+			}
+			if errorPercent, ok := settings["errorPercentThreshold"]; ok {
+				errorPercentThreshold = errorPercent
+			}
+			if reqVolThreshold, ok := settings["requestVolumeThreshold"]; ok {
+				requestVolumeThreshold = reqVolThreshold
+			}
+		}
+	}
+	// client settings override parameters
+	if deps.Default.Config.ContainsKey("clients.{{$clientID}}.sleepWindowInMilliseconds") {
+		sleepWindowInMilliseconds = int(deps.Default.Config.MustGetInt("clients.{{$clientID}}.sleepWindowInMilliseconds"))
+	}
+	if deps.Default.Config.ContainsKey("clients.{{$clientID}}.maxConcurrentRequests") {
+		maxConcurrentRequests = int(deps.Default.Config.MustGetInt("clients.{{$clientID}}.maxConcurrentRequests"))
+	}
+	if deps.Default.Config.ContainsKey("clients.{{$clientID}}.errorPercentThreshold") {
+		errorPercentThreshold = int(deps.Default.Config.MustGetInt("clients.{{$clientID}}.errorPercentThreshold"))
+	}
+	if deps.Default.Config.ContainsKey("clients.{{$clientID}}.requestVolumeThreshold") {
+		requestVolumeThreshold = int(deps.Default.Config.MustGetInt("clients.{{$clientID}}.requestVolumeThreshold"))
+	}
+	hystrix.ConfigureCommand(circuitBreakerName, hystrix.CommandConfig{
+			MaxConcurrentRequests:  maxConcurrentRequests,
+			ErrorPercentThreshold:  errorPercentThreshold,
+			SleepWindow:            sleepWindowInMilliseconds,
+			RequestVolumeThreshold: requestVolumeThreshold,
+			Timeout:                timeoutVal,
+		})
+}
+
+// {{$clientName}} is the TChannel client for downstream service.
+type {{$clientName}} struct {
+	client *zanzibar.TChannelClient
+	circuitBreakerDisabled bool
+	defaultDeps  *zanzibar.DefaultDependencies
+}
+
+{{range $svc := .Services}}
+{{range .Methods}}
+{{$serviceMethod := printf "%s::%s" $svc.Name .Name -}}
+{{$methodName := (title (index $exposedMethods $serviceMethod)) -}}
+{{if $methodName -}}
+	// {{$methodName}} is a client RPC call for method "{{$serviceMethod}}"
+	func (c *{{$clientName}}) {{$methodName}}(
+		ctx context.Context,
+		reqHeaders map[string]string,
+		{{if ne .RequestType "" -}}
+		args {{.RequestType}},
+		{{end -}}
+		timeoutAndRetryCfg *zanzibar.TimeoutAndRetryOptions,
+	) (context.Context, {{- if ne .ResponseType "" -}} {{.ResponseType}}, {{- end -}}map[string]string, error) {
+		var result {{.GenCodePkgName}}.{{title $svc.Name}}_{{title .Name}}_Result
+		{{if .ResponseType -}}
+		var resp {{.ResponseType}}
+		{{end}}
+		logger := c.client.ContextLogger
+
+		{{if eq .RequestType "" -}}
+			args := &{{.GenCodePkgName}}.{{title $svc.Name}}_{{title .Name}}_Args{}
+		{{end -}}
+
+		var success bool
+		respHeaders := make(map[string]string)
+		var err error
+		if (c.circuitBreakerDisabled) {
+			success, respHeaders, err = c.client.Call(
+				ctx, "{{$svc.Name}}", "{{.Name}}", reqHeaders, args, &result, timeoutAndRetryCfg,
+			)
+		} else {
+			// We want hystrix ckt-breaker to count errors only for system issues
+			var clientErr error
+			scope := c.defaultDeps.Scope.Tagged(map[string]string{
+			"client" : "{{$clientID}}",
+			"methodName" : "{{$methodName}}",
+			})
+			start := time.Now()
+			circuitBreakerName := "{{$clientID}}" + "-" + "{{$methodName}}"
+			err = hystrix.DoC(ctx, circuitBreakerName, func(ctx context.Context) error {
+				elapsed := time.Now().Sub(start)
+				scope.Timer("hystrix-timer").Record(elapsed)
+				success, respHeaders, clientErr = c.client.Call(
+					ctx, "{{$svc.Name}}", "{{.Name}}", reqHeaders, args, &result, timeoutAndRetryCfg,
+				)
+				if _, isSysErr := clientErr.(tchannel.SystemError); !isSysErr {
+					// Declare ok if it is not a system-error
+					return nil
+				}
+				return clientErr
+			}, nil)
+			if err == nil {
+				// ckt-breaker was ok, bubble up client error if set
+				err = clientErr
+			}
+		}
+
+		if err == nil && !success {
+			switch {
+				{{range .Exceptions -}}
+				case result.{{title .Name}} != nil:
+					err = result.{{title .Name}}
+				{{end -}}
+				{{if ne .ResponseType "" -}}
+				case result.Success != nil:
+					ctx = logger.ErrorZ(ctx, "Internal error. Success flag is not set for {{title .Name}}. Overriding", zap.Error(err))
+					success = true
+				{{end -}}
+				default:
+					err = errors.New("{{$clientName}} received no result or unknown exception for {{title .Name}}")
+			}
+		}
+		if err != nil {
+			ctx = logger.WarnZ(ctx, "Client failure: TChannel client call returned error", zap.Error(err))
+		{{if eq .ResponseType "" -}}
+			return ctx, respHeaders, err
+		{{else -}}
+			return ctx, resp, respHeaders, err
+		{{end -}}
+		}
+
+		{{if eq .ResponseType "" -}}
+			return ctx, respHeaders, err
+		{{else -}}
+			resp, err = {{.GenCodePkgName}}.{{title $svc.Name}}_{{title .Name}}_Helper.UnwrapResponse(&result)
+			if err != nil {
+				ctx = logger.WarnZ(ctx, "Client failure: unable to unwrap client response", zap.Error(err))
+			}
+			return ctx, resp, respHeaders, err
+		{{end -}}
+	}
+{{end -}}
+{{end -}}
+{{end}}

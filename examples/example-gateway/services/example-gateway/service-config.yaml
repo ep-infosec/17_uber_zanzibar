@@ -1,0 +1,16 @@
+name: example-gateway
+type: gateway
+config: {}
+dependencies:
+  endpoint:
+  - bar
+  - baz
+  - contacts
+  - googlenow
+  - tchannel/baz
+  - multi
+  - panic
+  - tchannel/panic
+  - tchannel/quux
+  - withexceptions
+  - clientless

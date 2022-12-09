@@ -1,0 +1,102 @@
+{{- /* template to render edge gateway tchannel server code */ -}}
+{{- $instance := .Instance }}
+package {{$instance.PackageInfo.PackageName}}
+
+import (
+	"context"
+	"errors"
+	"time"
+
+	zanzibar "github.com/uber/zanzibar/runtime"
+	"go.uber.org/thriftrw/wire"
+
+	{{range $idx, $pkg := .IncludedPackages -}}
+	{{$pkg.AliasName}} "{{$pkg.PackageName}}"
+	{{end}}
+)
+
+{{$exposedMethods := .ExposedMethods -}}
+{{range $svc := .Services}}
+{{range .Methods}}
+{{$serviceMethod := printf "%s::%s" $svc.Name .Name -}}
+{{$methodName := index $exposedMethods $serviceMethod -}}
+{{if $methodName -}}
+{{$privateName := lower .Name -}}
+{{$genCodePkg := .GenCodePkgName -}}
+{{$func := printf "%s%sFunc" $svc.Name (lintAcronym .Name) -}}
+{{$handler := printf "%s%sHandler" $svc.Name (lintAcronym .Name) -}}
+// {{$func}} is the handler function for "{{.Name}}" method of thrift service "{{$svc.Name}}".
+type {{$func}} func (
+	ctx context.Context,
+	reqHeaders map[string]string,
+	{{if ne .RequestType "" -}}
+		args {{.RequestType}},
+	{{end -}}
+) ({{- if ne .ResponseType "" -}}{{.ResponseType}}, {{- end -}}map[string]string, error)
+
+// New{{$handler}} wraps a handler function so it can be registered with a thrift server.
+func New{{$handler}}(f {{$func}}) zanzibar.TChannelHandler {
+	return &{{$handler}}{f}
+}
+
+// {{$handler}} handles the "{{.Name}}" method call of thrift service "{{$svc.Name}}".
+type {{$handler}} struct {
+	{{$privateName}} {{$func}}
+}
+
+// Handle parses request from wire value and calls corresponding handler function.
+func (h *{{$handler}}) Handle(
+	ctx context.Context,
+	reqHeaders map[string]string,
+	sr stream.Reader,
+) (context.Context, bool, zanzibar.RWTStruct, map[string]string, error) {
+	var req {{$genCodePkg}}.{{title $svc.Name}}_{{title .Name}}_Args
+	var res {{$genCodePkg}}.{{title $svc.Name}}_{{title .Name}}_Result
+
+	if err := req.Decode(sr); err != nil {
+		return ctx, false, nil, nil, err
+	}
+
+	{{- if and (eq .RequestType "") (eq .ResponseType "")}}
+		respHeaders, err := h.{{$privateName}}(ctx, reqHeaders)
+	{{- else if eq .RequestType ""}}
+		r, respHeaders, err := h.{{$privateName}}(ctx, reqHeaders)
+	{{- else if eq .ResponseType ""}}
+		respHeaders, err := h.{{$privateName}}(ctx, reqHeaders, &req)
+	{{- else}}
+		r, respHeaders, err := h.{{$privateName}}(ctx, reqHeaders, &req)
+	{{- end}}
+
+	{{if eq (len .Exceptions) 0 -}}
+		if err != nil {
+			return ctx, false, nil, nil, err
+		}
+		{{if .ResponseType -}}
+		res.Success = {{.RefResponse "r"}}
+		{{end -}}
+	{{else -}}
+		if err != nil {
+			switch v := err.(type) {
+			{{$method := .Name -}}
+			{{range .Exceptions -}}
+				case *{{.Type}}:
+					if v == nil {
+						return ctx, false, nil, nil, errors.New(
+							"Handler for {{$method}} returned non-nil error type *{{title .Name}} but nil value",
+						)
+					}
+					res.{{title .Name}} = v
+			{{end -}}
+				default:
+					return ctx, false, nil, nil, err
+			}
+		} {{if .ResponseType -}} else {
+			res.Success = {{.RefResponse "r"}}
+		} {{end -}}
+	{{end}}
+
+	return ctx, err == nil, &res, respHeaders, nil
+}
+{{end -}}
+{{end -}}
+{{end}}

@@ -1,0 +1,13 @@
+config:
+  endpoints:
+  - call.yaml
+  - echo.yaml
+  rateLimit: 100
+dependencies:
+  client:
+  - baz
+  - quux
+  middleware:
+  - example_tchannel
+name: bazTChannel
+type: tchannel

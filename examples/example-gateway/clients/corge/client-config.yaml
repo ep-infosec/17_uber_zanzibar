@@ -1,0 +1,8 @@
+config:
+  exposedMethods:
+    EchoString: Corge::echoString
+  sidecarRouter: default
+  idlFile: clients/corge/corge.thrift
+  idlFileSha: '{{placeholder}}'
+name: corge
+type: tchannel

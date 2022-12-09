@@ -1,0 +1,196 @@
+{{/* template to render gateway http endpoint tests */}}
+{{- $instance := .Instance }}
+package {{$instance.PackageInfo.PackageName}}
+
+import (
+	"bytes"
+	"context"
+	{{if .Method.DownstreamMethod.ResponseType -}}
+	"encoding/json"
+	{{end -}}
+	"path/filepath"
+	"testing"
+	"strconv"
+	{{if ne .Method.ResponseType "" -}}
+	"io/ioutil"
+	{{end}}
+
+	"github.com/stretchr/testify/assert"
+	testGateway "github.com/uber/zanzibar/test/lib/test_gateway"
+	"github.com/uber/zanzibar/test/lib/util"
+	"github.com/uber/zanzibar/config"
+	testbackend "github.com/uber/zanzibar/test/lib/test_backend"
+
+	{{range $idx, $pkg := .IncludedPackages -}}
+	{{$pkg.AliasName}} "{{$pkg.PackageName}}"
+	{{end}}
+)
+
+{{- $clientName := camel .ClientName -}}
+{{- $headers := .ReqHeaders }}
+
+{{with .Method -}}
+{{- $responseType := .ResponseType -}}
+{{- $clientPackage := .Downstream.PackageName -}}
+{{- $thriftService := .DownstreamMethod.ThriftService -}}
+{{- $clientMethod := .DownstreamMethod -}}
+{{- $clientMethodName := $clientMethod.Name -}}
+{{- $clientMethodRequestType := fullTypeName  ($clientMethod).RequestType ($clientPackage) -}}
+{{- $clientMethodResponseType := fullTypeName  ($clientMethod).ResponseType ($clientPackage) -}}
+
+{{range $testName, $testFixture := $.TestFixtures}}
+func Test{{title $testFixture.HandleID}}{{title $testFixture.TestName}}OKResponse(t *testing.T) {
+
+	confFiles := util.DefaultConfigFiles("{{$testFixture.TestServiceName}}")
+	staticConf := config.NewRuntimeConfigOrDie(confFiles, map[string]interface{}{})
+	var alternateServiceDetail config.AlternateServiceDetail
+	if staticConf.ContainsKey("clients.{{$clientName}}.alternates") {
+		staticConf.MustGetStruct("clients.{{$clientName}}.alternates", &alternateServiceDetail)
+	}
+	var backends []*testbackend.TestTChannelBackend
+	for serviceName := range alternateServiceDetail.ServicesDetailMap {
+		if serviceName == "nomatch" {
+			continue
+		}
+		backend, err := testbackend.CreateTChannelBackend(int32(0), serviceName)
+		assert.NoError(t, err)
+		err = backend.Bootstrap()
+		assert.NoError(t, err)
+		backends = append(backends, backend)
+	}
+
+	gateway, err := testGateway.CreateGateway(t, map[string]interface{}{
+		{{/* the serviceName here is service discovery name, therefore is ok to be arbitrary */ -}}
+		"clients.{{$clientName}}.serviceName": "{{$clientName}}Service",
+	}, &testGateway.Options{
+	KnownTChannelBackends: []string{"{{$clientName}}"},
+		TestBinary:            util.DefaultMainFile("{{$testFixture.TestServiceName}}"),
+		ConfigFiles:           confFiles,
+		Backends:              backends,
+	})
+	if !assert.NoError(t, err, "got bootstrap err") {
+		return
+	}
+	defer gateway.Close()
+
+	{{range $clientCallName, $clientCallFixture := $testFixture.ClientTestFixtures}}
+	{{$clientFunc := printf "fake%s" (title $clientCallFixture.ClientMethod) -}}
+	{{$clientFunc}} := func(
+		ctx context.Context,
+		reqHeaders map[string]string,
+		{{if $clientMethod.RequestType -}}
+		args {{$clientMethodRequestType}},
+		{{end -}}
+	) ({{- if $clientMethod.ResponseType -}}{{$clientMethodResponseType}}, {{- end -}}map[string]string, error) {
+
+		{{range $k, $v := $clientCallFixture.ClientReqHeaders -}}
+		assert.Equal(
+			t,
+			"{{$v}}",
+			reqHeaders["{{$k}}"])
+		{{end -}}
+
+		var resHeaders map[string]string
+		{{if (len $clientCallFixture.ClientResHeaders) -}}
+		resHeaders = map[string]string{}
+		{{end -}}
+		{{range $k, $v := $clientCallFixture.ClientResHeaders -}}
+		resHeaders["{{$k}}"] = "{{$v}}"
+		{{end}}
+
+		{{if $clientMethod.ResponseType -}}
+		var res {{unref $clientMethod.ResponseType}}
+
+		clientResponse := []byte({{printf "`%s`" $clientCallFixture.ClientResponse.Body}})
+		err := json.Unmarshal(clientResponse, &res)
+		if err!= nil {
+			t.Fatal("cant't unmarshal client response json to client response struct")
+			return nil, resHeaders, err
+		}
+		return &res, resHeaders, nil
+		{{else -}}
+		return resHeaders, nil
+		{{end -}}
+	}
+
+	headers := map[string]string{}
+	err = gateway.TChannelBackends()["{{$clientName}}"].Register(
+			"{{$testFixture.EndpointID}}", "{{$testFixture.HandleID}}", "{{$thriftService}}::{{$clientMethodName}}",
+				{{$clientPackage}}.New{{$thriftService}}{{title $clientMethodName}}Handler({{$clientFunc}}),
+		)
+	assert.NoError(t, err)
+	makeRequestAndValidate{{title $testFixture.HandleID}}{{title $testFixture.TestName}}(t, gateway, headers)
+
+	isSet := true
+	i := 1
+	for serviceName := range alternateServiceDetail.ServicesDetailMap {
+		headers := map[string]string{}
+
+		if serviceName == "nomatch" {
+			headers["x-container"] = "randomstr"
+			headers["x-test-Env"] = "randomstr"
+		} else {
+			if isSet {
+				headers["x-container"] = "sandbox"
+				isSet = false
+			} else {
+				headers["x-test-Env"] = "test1"
+			}
+			err = gateway.TChannelBackends()["{{$clientName}}:"+strconv.Itoa(i)].Register(
+				"{{$testFixture.EndpointID}}", "{{$testFixture.HandleID}}", "{{$thriftService}}::{{$clientMethodName}}",
+				{{$clientPackage}}.New{{$thriftService}}{{title $clientMethodName}}Handler({{$clientFunc}}),
+			)
+			assert.NoError(t, err)
+			i++
+		}
+
+		makeRequestAndValidate{{title $testFixture.HandleID}}{{title $testFixture.TestName}}(t, gateway, headers)
+	}
+	{{end}}
+}
+
+func makeRequestAndValidate{{title $testFixture.HandleID}}{{title $testFixture.TestName}}(t *testing.T, gateway testGateway.TestGateway, headers map[string]string) {
+	{{ if $headers -}}
+	{{range $k, $v := $testFixture.EndpointReqHeaders -}}
+	headers["{{$k}}"] = "{{$v}}"
+	{{end}}
+	{{- end}}
+
+	{{ if $testFixture.EndpointRequest.Body -}}
+	endpointRequest := []byte({{printf "`%s`" $testFixture.EndpointRequest.Body}})
+	{{else}}
+	endpointRequest := []byte(`{}`)
+	{{- end}}
+
+	res, err := gateway.MakeRequest(
+		"{{$.Method.HTTPMethod}}",
+		"{{$.Method.HTTPPath}}",
+		headers,
+		bytes.NewReader(endpointRequest),
+	)
+	if !assert.NoError(t, err, "got http error") {
+		return
+	}
+
+	{{if $responseType -}}
+	defer func() { _ = res.Body.Close() }()
+	data, err := ioutil.ReadAll(res.Body)
+	if !assert.NoError(t, err, "failed to read response body") {
+		return
+	}
+	{{end}}
+
+	assert.Equal(t, {{$.Method.OKStatusCode.Code}}, res.StatusCode)
+	{{range $k, $v := $testFixture.EndpointResHeaders -}}
+	assert.Equal(
+		t,
+		"{{$v}}",
+		res.Header.Get("{{$k}}"))
+	{{end -}}
+	{{if $responseType -}}
+		assert.JSONEq(t, `{{$testFixture.EndpointResponse.Body}}`, string(data))
+	{{end -}}
+}
+
+{{end -}}
+{{end -}}

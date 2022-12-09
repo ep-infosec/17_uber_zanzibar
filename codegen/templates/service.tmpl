@@ -1,0 +1,52 @@
+{{- /* template to render gateway main.go */ -}}
+{{- $instance := . -}}
+
+package {{$instance.PackageInfo.GeneratedPackageAlias}}
+
+import (
+	"os"
+	"path/filepath"
+
+	"go.uber.org/zap"
+	zanzibar "github.com/uber/zanzibar/runtime"
+
+	module "{{$instance.PackageInfo.ModulePackagePath}}"
+)
+
+// DependenciesTree re-exported for convenience.
+type DependenciesTree module.DependenciesTree
+
+// CreateGateway creates a new instances of the {{$instance.InstanceName}}
+// service with the specified config
+func CreateGateway(
+	config *zanzibar.StaticConfig,
+	opts *zanzibar.Options,
+) (*zanzibar.Gateway, interface{}, error) {
+	gateway, err := zanzibar.CreateGateway(config, opts)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	tree, dependencies := module.InitializeDependencies(gateway)
+	registerErr := RegisterDeps(gateway, dependencies)
+	if registerErr != nil {
+		return nil, nil, registerErr
+	}
+
+	return gateway, (*DependenciesTree)(tree), nil
+}
+
+// RegisterDeps registers direct dependencies of the service
+func RegisterDeps(g *zanzibar.Gateway, deps *module.Dependencies) error {
+	//lint:ignore S1021 allow less concise variable declaration for ease of code generation
+	var err error
+	{{- range $class, $instances := $instance.ResolvedDependencies }}
+	{{- range $idx, $instance := $instances }}
+	err = deps.{{title $class}}.{{$instance.PackageInfo.QualifiedInstanceName}}.Register(g)
+	if err != nil {
+		return err
+	}
+	{{- end}}
+	{{- end}}
+	return nil
+}

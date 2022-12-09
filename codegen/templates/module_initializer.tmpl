@@ -1,0 +1,70 @@
+{{$instance := . -}}
+
+package module
+
+import (
+	{{range $classType, $moduleInstances := $instance.RecursiveDependencies -}}
+	{{range $idx, $moduleInstance := $moduleInstances -}}
+	{{$moduleInstance.PackageInfo.ImportPackageAlias}} "{{$moduleInstance.PackageInfo.ImportPackagePath}}"
+	{{$moduleInstance.PackageInfo.ModulePackageAlias}} "{{$moduleInstance.PackageInfo.ModulePackagePath}}"
+	{{end -}}
+	{{end}}
+
+	zanzibar "github.com/uber/zanzibar/runtime"
+)
+
+// DependenciesTree contains all deps for this service.
+type DependenciesTree struct {
+	{{range $idx, $className := $instance.DependencyOrder -}}
+	{{$className | title}} *{{$className | title}}DependenciesNodes
+	{{end -}}
+}
+
+{{range $idx, $className := $instance.DependencyOrder -}}
+{{$moduleInstances := (index $instance.RecursiveDependencies $className) -}}
+// {{$className | title}}DependenciesNodes contains {{$className}} dependencies
+type {{$className | title}}DependenciesNodes struct {
+	{{ range $idx, $dependency := $moduleInstances -}}
+	{{$dependency.PackageInfo.QualifiedInstanceName}} {{$dependency.PackageInfo.ImportPackageAlias}}.{{$dependency.PackageInfo.ExportType}}
+	{{end -}}
+}
+{{end -}}
+
+// InitializeDependencies fully initializes all dependencies in the dep tree
+// for the {{$instance.InstanceName}} {{$instance.ClassName}}
+func InitializeDependencies(
+	g *zanzibar.Gateway,
+) (*DependenciesTree, *Dependencies) {
+	tree := &DependenciesTree{}
+
+	initializedDefaultDependencies := &zanzibar.DefaultDependencies{
+		Logger:               g.Logger,
+		ContextExtractor:     g.ContextExtractor,
+		ContextLogger:        g.ContextLogger,
+		ContextMetrics:       zanzibar.NewContextMetrics(g.RootScope),
+		Scope:                g.RootScope,
+		Tracer:               g.Tracer,
+		Config:               g.Config,
+		ServerTChannel:       g.ServerTChannel,
+		Gateway:              g,
+		GRPCClientDispatcher: g.GRPCClientDispatcher,
+		JSONWrapper:		  g.JSONWrapper,
+	}
+
+	{{range $idx, $className := $instance.DependencyOrder}}
+	{{template "module_class_initializer.tmpl" args $className $instance}}
+	{{end}}
+
+	dependencies := &Dependencies{
+		Default: initializedDefaultDependencies,
+		{{- range $className, $moduleInstances := $instance.ResolvedDependencies}}
+		{{$className | pascal}}: &{{$className | pascal}}Dependencies{
+			{{- range $idy, $subDependency := $moduleInstances}}
+			{{$subDependency.PackageInfo.QualifiedInstanceName}}: initialized{{$className | pascal}}Dependencies.{{$subDependency.PackageInfo.QualifiedInstanceName}},
+			{{- end}}
+		},
+		{{- end}}
+	}
+
+	return tree, dependencies
+}

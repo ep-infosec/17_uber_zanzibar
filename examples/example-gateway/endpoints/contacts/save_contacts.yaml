@@ -1,0 +1,13 @@
+endpointId: contacts
+endpointType: http
+handleId: saveContacts
+qpsLevel: 1
+middlewares: []
+reqHeaderMap: {}
+resHeaderMap: {}
+testFixtures: {}
+thriftFile: endpoints/contacts/contacts.thrift
+thriftFileSha: '{{placeholder}}'
+thriftMethodName: Contacts::saveContacts
+workflowImportPath: github.com/uber/zanzibar/examples/example-gateway/endpoints/contacts
+workflowType: custom

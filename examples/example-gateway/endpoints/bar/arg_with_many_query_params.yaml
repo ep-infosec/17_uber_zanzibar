@@ -1,0 +1,14 @@
+clientId: bar
+clientMethod: ArgWithManyQueryParams
+endpointId: bar
+endpointType: http
+handleId: argWithManyQueryParams
+qpsLevel: 1
+middlewares: []
+reqHeaderMap: {}
+resHeaderMap: {}
+testFixtures: {}
+thriftFile: endpoints/bar/bar.thrift
+thriftFileSha: '{{placeholder}}'
+thriftMethodName: Bar::argWithManyQueryParams
+workflowType: httpClient

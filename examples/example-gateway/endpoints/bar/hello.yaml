@@ -1,0 +1,14 @@
+clientId: bar
+clientMethod: Hello
+endpointId: bar
+endpointType: http
+handleId: helloWorld
+qpsLevel: 2
+middlewares: []
+reqHeaderMap: {}
+resHeaderMap: {}
+testFixtures: {}
+thriftFile: endpoints/bar/bar.thrift
+thriftFileSha: '{{placeholder}}'
+thriftMethodName: Bar::helloWorld
+workflowType: httpClient

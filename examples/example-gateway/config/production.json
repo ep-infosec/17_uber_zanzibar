@@ -1,0 +1,139 @@
+{
+	"clients.bar.defaultHeaders": {
+		"X-Client-ID": "bar"
+	},
+	"clients.bar.ip": "127.0.0.1",
+	"clients.bar.port": 4001,
+	"clients.bar.timeout": 10000,
+	"clients.bar.methodTimeoutMapping": "{\"normal\":10000,\"normalRecur\":10000,\"noRequest\":10000,\"missingArg\":10000,\"tooManyArgs\":10000,\"argNotStruct\":10000,\"argWithHeaders\":10000,\"argWithQueryParams\":10000,\"argWithNestedQueryParams\":10000,\"argWithNearDupQueryParams\":10000,\"argWithQueryHeader\":10000,\"argWithManyQueryParams\":10000,\"argWithParams\":10000,\"argWithParamsAndDuplicateFields\":10000,\"helloWorld\":10000,\"deleteFoo\":10000,\"deleteWithQueryParams\":10000,\"deleteWithBody\":10000,\"listAndEnum\":10000,\"echoI8\":10000,\"echoI16\":10000,\"echoI32\":10000,\"echoI64\":10000,\"echoDouble\":10000,\"echoBool\":10000,\"echoBinary\":10000,\"echoString\":10000,\"echoEnum\":10000,\"echoTypedef\":10000,\"echoStringSet\":10000,\"echoStructSet\":10000,\"echoStringList\":10000,\"echoStructList\":10000,\"echoI32Map\":10000,\"echoStringMap\":10000}",
+	"clients.baz.ip": "127.0.0.1",
+	"clients.baz.port": 4002,
+	"clients.baz.serviceName": "Qux",
+	"clients.baz.timeout": 10000,
+	"clients.baz.timeoutPerAttempt": 2000,
+	"clients.baz.maxConcurrentRequests": 1000,
+	"clients.baz.errorPercentThreshold": 20,
+	"clients.baz.sleepWindowInMilliseconds" : 5000,
+	"clients.baz.requestVolumeThreshold" : 20,
+	"clients.baz.methodTimeoutMapping" : "{\"call\":2000,\"compare\":2000,\"sillyNoop\":2000,\"echoBinary\":2000,\"echoBool\":2000,\"echoDouble\":2000,\"echoEnum\":2000,\"echoI16\":2000,\"echoI32\":2000,\"echoI64\":2000,\"echoI8\":2000,\"echoString\":2000,\"echoStringList\":2000,\"echoStringMap\":2000,\"echoStringSet\":2000,\"echoStructList\":2000,\"echoStructSet\":2000,\"echoTypedef\":2000,\"getProfile\":2000,\"headerSchema\":2000,\"ping\":2000,\"testUuid\":2000,\"trans\":2000,\"transHeaders\":2000,\"transHeadersNoReq\":2000,\"transHeadersType\":2000,\"urlTest\":2000}",
+	"clients.contacts.ip": "127.0.0.1",
+	"clients.contacts.port": 4000,
+	"clients.contacts.timeout": 10000,
+	"clients.contacts.maxConcurrentRequests": 1000,
+	"clients.contacts.errorPercentThreshold": 20,
+	"clients.corge.serviceName": "Corge",
+	"clients.corge.timeout": 10000,
+	"clients.corge.timeoutPerAttempt": 2000,
+	"clients.corge.maxConcurrentRequests": 1000,
+	"clients.corge.errorPercentThreshold": 20,
+	"clients.corge-http.serviceName": "CorgeHttp",
+	"clients.corge-http.maxConcurrentRequests": 1000,
+	"clients.corge-http.errorPercentThreshold": 20,
+	"clients.corge-http.alternates": {
+		"routingConfigs": [
+			{
+				"headerName": "x-api-environment",
+				"headerValue": "^staging",
+				"serviceName": "CorgeHttp-staging"
+			},
+			{
+				"headerName": "x-api-environment",
+				"headerValue": "^canary",
+				"serviceName": "CorgeHttp-canary"
+			},
+			{
+				"headerName": "x-alt-router",
+				"headerValue": "^alternate",
+				"serviceName": "CorgeHttp-alt"
+			}
+		],
+		"servicesDetail": {
+			"corge-http-staging": {
+				"ip": "127.0.0.1",
+				"port": 5436
+			}
+		}
+	},
+	"clients.google-now.ip": "127.0.0.1",
+	"clients.google-now.port": 14120,
+	"clients.google-now.timeout": 10000,
+	"clients.google-now.circuitBreakerDisabled": true,
+	"clients.googleNowTChannel.connectionType": "p2p",
+	"clients.googleNowTChannel.hostList": [
+		"127.0.0.1:4002"
+	],
+	"clients.googleNowTChannel.timeout": 10000,
+	"clients.googleNowTChannel.maxConcurrentRequests": 1000,
+	"clients.googleNowTChannel.errorPercentThreshold": 20,
+	"clients.multi.ip": "127.0.0.1",
+	"clients.multi.port": 4003,
+	"clients.multi.timeout": 10000,
+	"clients.multi.maxConcurrentRequests": 1000,
+	"clients.multi.errorPercentThreshold": 20,
+	"clients.withexceptions.ip": "127.0.0.1",
+	"clients.withexceptions.port": 4004,
+	"clients.withexceptions.timeout": 10000,
+	"clients.withexceptions.maxConcurrentRequests": 1000,
+	"clients.withexceptions.errorPercentThreshold": 20,
+	"contextlogger.zanzibar.skiplogs": false,
+	"envVarsToTagInRootScope": [],
+	"http.port": 7783,
+	"http.clients.requestUUIDHeaderKey": "x-request-uuid",
+	"logger.fileName": "/var/log/example-gateway/example-gateway.log",
+	"logger.output": "disk",
+	"metrics.serviceName": "example-gateway",
+	"metrics.m3.includeHost": true,
+	"service.env.config": {},
+	"serviceName": "example-gateway",
+	"sidecarRouter.default.http.ip": "127.0.0.1",
+	"sidecarRouter.default.http.port": 4999,
+	"sidecarRouter.default.http.calleeHeader": "RPC-Service",
+	"sidecarRouter.default.http.callerHeader": "RPC-Caller",
+	"sidecarRouter.default.tchannel.ip": "127.0.0.1",
+	"sidecarRouter.default.tchannel.port": 5000,
+	"tchannel.port": 7784,
+	"tchannel.processName": "example-gateway",
+	"tchannel.serviceName": "example-gateway",
+	"tchannel.clients.requestUUIDHeaderKey": "x-request-uuid",
+	"useDatacenter": false,
+	"circuitbreaking-configurations": {
+		"levels": {
+			"1": "0-99",
+			"2": "100-999",
+			"3": "1000-9999",
+			"4": "10000+"
+		},
+		"parameters": {
+			"default": {
+				"sleepWindowInMilliseconds": 5000,
+				"errorPercentThreshold": 20,
+				"requestVolumeThreshold": 20,
+				"maxConcurrentRequests": 20
+			},
+			"1": {
+				"sleepWindowInMilliseconds": 7000,
+				"errorPercentThreshold": 10,
+				"requestVolumeThreshold": 15,
+				"maxConcurrentRequests": 20
+			},
+			"2": {
+				"sleepWindowInMilliseconds": 4000,
+				"errorPercentThreshold": 15,
+				"requestVolumeThreshold": 22,
+				"maxConcurrentRequest": 20
+			},
+			"3": {
+				"sleepWindowInMilliseconds": 3000,
+				"errorPercentThreshold": 25,
+				"requestVolumeThreshold": 24,
+				"maxConcurrentRequests": 25
+			},
+			"4": {
+				"sleepWindowInMilliseconds": 1000,
+				"errorPercentThreshold": 30,
+				"requestVolumeThreshold": 25,
+				"maxConcurrentRequests": 30
+			}
+		}
+	}
+}

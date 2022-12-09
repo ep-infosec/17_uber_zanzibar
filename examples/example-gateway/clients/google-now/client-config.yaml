@@ -1,0 +1,8 @@
+config:
+  exposedMethods:
+    AddCredentials: GoogleNowService::addCredentials
+    CheckCredentials: GoogleNowService::checkCredentials
+  idlFile: clients/googlenow/googlenow.thrift
+  idlFileSha: '{{placeholder}}'
+name: google-now
+type: http

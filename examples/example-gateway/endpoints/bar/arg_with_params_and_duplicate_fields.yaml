@@ -1,0 +1,14 @@
+clientId: bar
+clientMethod: ArgWithParamsAndDuplicateFields
+endpointId: bar
+endpointType: http
+handleId: argWithParamsAndDuplicateFields
+qpsLevel: 1
+middlewares: []
+reqHeaderMap: {}
+resHeaderMap: {}
+testFixtures: {}
+thriftFile: endpoints/bar/bar.thrift
+thriftFileSha: '{{placeholder}}'
+thriftMethodName: Bar::argWithParamsAndDuplicateFields
+workflowType: httpClient

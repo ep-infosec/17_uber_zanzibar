@@ -1,0 +1,134 @@
+{{/* template to render gateway http endpoint tests */ -}}
+{{- $instance := .Instance }}
+package {{$instance.PackageInfo.PackageName}}
+
+import (
+	"bytes"
+	"path/filepath"
+	"net/http"
+	"testing"
+	"runtime"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/uber/zanzibar/test/lib/bench_gateway"
+	testBackend "github.com/uber/zanzibar/test/lib/test_backend"
+	testGateway "github.com/uber/zanzibar/test/lib/test_gateway"
+)
+
+{{- $clientID := .ClientID }}
+{{- $relativePathToRoot := .RelativePathToRoot}}
+{{- $headers := .ReqHeaders }}
+{{with .Method -}}
+{{- $clientPackage := .Downstream.PackageName -}}
+{{- $clientMethod := .DownstreamMethod -}}
+{{- $clientMethodName := $clientMethod.Name | title -}}
+{{- $clientMethodRequestType := fullTypeName  ($clientMethod).RequestType ($clientPackage) -}}
+{{- $clientMethodResponseType := fullTypeName  ($clientMethod).ResponseType ($clientPackage) -}}
+
+
+{{range $testName, $testFixture := $.TestFixtures}}
+
+func getDirName{{$testFixture.HandleID | title}}{{$testFixture.TestName | title}}() string {
+	_, file, _, _ := runtime.Caller(0)
+
+	return filepath.Dir(file)
+}
+
+func Test{{$testFixture.HandleID | title}}{{$testFixture.TestName | title}}OKResponse(t *testing.T) {
+	var counter int
+
+	gateway, err := testGateway.CreateGateway(t, nil, &testGateway.Options{
+		KnownHTTPBackends: []string{"{{$clientID}}"},
+		TestBinary: filepath.Join(
+			getDirName{{$testFixture.HandleID | title}}{{$testFixture.TestName | title}}(),
+			"{{$relativePathToRoot}}",
+			"build", "services", "{{$testFixture.TestServiceName}}",
+			"main", "main.go",
+		),
+		ConfigFiles: []string{
+			filepath.Join(
+				getDirName{{$testFixture.HandleID | title}}{{$testFixture.TestName | title}}(),
+				"{{$relativePathToRoot}}",
+				"config", "test.yaml",
+			),
+			filepath.Join(
+				getDirName{{$testFixture.HandleID | title}}{{$testFixture.TestName | title}}(),
+				"{{$relativePathToRoot}}",
+				"config", "{{$testFixture.TestServiceName}}", "test.yaml",
+			),
+		},
+	})
+	if !assert.NoError(t, err, "got bootstrap err") {
+		return
+	}
+	defer gateway.Close()
+
+	{{range $clientCallName, $clientCallFixture := $testFixture.ClientTestFixtures}}
+	fake{{$clientCallFixture.ClientMethod | title}} := func(w http.ResponseWriter, r *http.Request) {
+
+		{{range $k, $v := $clientCallFixture.ClientReqHeaders -}}
+		assert.Equal(
+			t,
+			"{{$v}}",
+			r.Header.Get("{{$k}}"))
+		{{end}}
+
+		{{range $k, $v := $clientCallFixture.ClientResHeaders -}}
+		w.Header().Set("{{$k}}", "{{$v}}")
+		{{end}}
+		w.WriteHeader({{$.Method.OKStatusCode.Code}})
+
+		{{ if $clientCallFixture.ClientResponse.Body -}}
+		payload := []byte({{printf "`%s`" $clientCallFixture.ClientResponse.Body}})
+		{{else}}
+		var payload []byte
+		{{- end}}
+
+		// TODO(zw): generate client response.
+		if _, err := w.Write(payload); err != nil {
+			t.Fatal("can't write fake response")
+		}
+		counter++
+	}
+
+	gateway.HTTPBackends()["{{$clientID}}"].HandleFunc(
+		"{{$clientMethod.HTTPMethod}}", "{{$clientMethod.HTTPPath}}", fake{{$clientCallFixture.ClientMethod | title}},
+	)
+
+	{{end -}}
+
+	headers := map[string]string{}
+	{{ if $headers -}}
+	{{range $k, $v := $testFixture.EndpointReqHeaders -}}
+	headers["{{$k}}"] = "{{$v}}"
+	{{end}}
+	{{- end}}
+
+	{{ if $testFixture.EndpointRequest.Body -}}
+	endpointRequest := []byte({{printf "`%s`" $testFixture.EndpointRequest.Body}})
+	{{else}}
+	endpointRequest := []byte(`{}`)
+	{{- end}}
+
+	res, err := gateway.MakeRequest(
+		"{{$.Method.HTTPMethod}}",
+		"{{$.Method.HTTPPath}}",
+		headers,
+		bytes.NewReader(endpointRequest),
+	)
+	if !assert.NoError(t, err, "got http error") {
+		return
+	}
+
+	assert.Equal(t, {{$.Method.OKStatusCode.Code}}, res.StatusCode)
+	{{range $k, $v := $testFixture.EndpointResHeaders -}}
+	assert.Equal(
+		t,
+		"{{$v}}",
+		res.Header.Get("{{$k}}"))
+	{{end}}
+	assert.Equal(t, 1, counter)
+}
+
+{{end -}}
+{{end -}}

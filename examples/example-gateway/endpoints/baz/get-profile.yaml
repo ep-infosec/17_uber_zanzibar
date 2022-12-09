@@ -1,0 +1,14 @@
+clientId: baz
+clientMethod: GetProfile
+endpointId: baz
+endpointType: http
+handleId: getProfile
+qpsLevel: 2
+middlewares: []
+reqHeaderMap: {}
+resHeaderMap: {}
+testFixtures: {}
+thriftFile: endpoints/baz/baz.thrift
+thriftFileSha: '{{placeholder}}'
+thriftMethodName: SimpleService::getProfile
+workflowType: tchannelClient

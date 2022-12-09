@@ -1,0 +1,105 @@
+{{$instance := .Instance -}}
+{{$leafWithFixture := .LeafWithFixture -}}
+{{$leafClass := firstIsClientOrEmpty $instance.DependencyOrder -}}
+{{$mockDeps := printf "Mock%sNodes" (title $leafClass) -}}
+{{$classPkg := "module" -}}
+
+package {{$instance.PackageInfo.GeneratedPackageAlias}}mock
+
+import (
+	"testing"
+
+	"github.com/golang/mock/gomock"
+	zanzibar "github.com/uber/zanzibar/runtime"
+	{{$classPkg}} "{{$instance.PackageInfo.ModulePackagePath}}"
+
+	{{range $classType, $moduleInstances := $instance.RecursiveDependencies -}}
+	{{range $idx, $moduleInstance := $moduleInstances -}}
+	{{if eq $classType $leafClass -}}
+	{{$moduleInstance.PackageInfo.GeneratedPackageAlias}} "{{$moduleInstance.PackageInfo.GeneratedPackagePath}}/mock-client"
+	{{if (index $leafWithFixture $moduleInstance.InstanceName) -}}
+	fixture{{$moduleInstance.PackageInfo.ImportPackageAlias}} "{{index $leafWithFixture $moduleInstance.InstanceName}}"
+	{{end -}}
+	{{else -}}
+	{{$moduleInstance.PackageInfo.ImportPackageAlias}} "{{$moduleInstance.PackageInfo.ImportPackagePath}}"
+	{{$moduleInstance.PackageInfo.ModulePackageAlias}} "{{$moduleInstance.PackageInfo.ModulePackagePath}}"
+	{{end -}}
+	{{end -}}
+	{{end}}
+)
+
+{{$moduleInstances := (index $instance.RecursiveDependencies $leafClass) -}}
+// {{$mockDeps}} contains mock {{$leafClass}} dependencies
+type {{$mockDeps}} struct {
+	{{ range $idx, $dependency := $moduleInstances -}}
+	{{- if (index $leafWithFixture $dependency.InstanceName) }}
+	{{$dependency.PackageInfo.QualifiedInstanceName}} *{{$dependency.PackageInfo.GeneratedPackageAlias}}.Mock{{$dependency.PackageInfo.ExportType}}WithFixture
+	{{- else }}
+	{{$dependency.PackageInfo.QualifiedInstanceName}} *{{$dependency.PackageInfo.GeneratedPackageAlias}}.Mock{{$dependency.PackageInfo.ExportType}}
+	{{- end }}
+	{{- end}}
+}
+
+// InitializeDependenciesMock fully initializes all dependencies in the dep tree
+// for the {{$instance.InstanceName}} {{$instance.ClassName}} with leaf nodes being mocks
+func InitializeDependenciesMock(
+	g *zanzibar.Gateway,
+	ctrl *gomock.Controller,
+) (*{{$classPkg}}.DependenciesTree, *{{$classPkg}}.Dependencies, *{{$mockDeps}}) {
+	tree := &{{$classPkg}}.DependenciesTree{}
+
+	{{ if eq $leafClass "" -}}
+	{{camel $mockDeps}} := &{{$mockDeps}}{}
+	{{ end -}}
+
+	initializedDefaultDependencies := &zanzibar.DefaultDependencies{
+		ContextExtractor:     g.ContextExtractor,
+		ContextMetrics:       g.ContextMetrics,
+		ContextLogger:        g.ContextLogger,
+		Logger:               g.Logger,
+		Scope:                g.RootScope,
+		Config:               g.Config,
+		ServerTChannel:   	  g.ServerTChannel,
+		Tracer:               g.Tracer,
+		GRPCClientDispatcher: g.GRPCClientDispatcher,
+		JSONWrapper:          g.JSONWrapper,
+	}
+
+	{{range $idx, $className := $instance.DependencyOrder}}
+	{{if eq $className $leafClass -}}
+	{{- $moduleInstances := (index $instance.RecursiveDependencies $className)}}
+	{{camel $mockDeps}} := &{{$mockDeps}}{
+		{{- range $idx, $dependency := $moduleInstances}}
+		{{- $pkgInfo := $dependency.PackageInfo }}
+		{{- if (index $leafWithFixture $dependency.InstanceName) }}
+		{{$pkgInfo.QualifiedInstanceName}}: {{$pkgInfo.GeneratedPackageAlias}}.New(ctrl, fixture{{$pkgInfo.ImportPackageAlias}}.Fixture),
+		{{- else }}
+		{{$pkgInfo.QualifiedInstanceName}}: {{$pkgInfo.GeneratedPackageAlias}}.NewMock{{title $className}}(ctrl),
+		{{- end }}
+		{{- end }}
+	}
+	{{- $initializedDeps := printf "initialized%sDependencies" (title $className) }}
+	{{$initializedDeps}} := &{{$classPkg}}.{{$className | title}}DependenciesNodes{}
+	tree.{{$className | title}} = {{$initializedDeps}}
+	{{- range $idx, $dependency := $moduleInstances}}
+	{{- $pkgInfo := $dependency.PackageInfo }}
+	{{$initializedDeps}}.{{$pkgInfo.QualifiedInstanceName}} = {{camel $mockDeps}}.{{$pkgInfo.QualifiedInstanceName}}
+	{{- end }}
+	{{else -}}
+	{{template "module_class_initializer.tmpl" args $className $instance $classPkg}}
+	{{end}}
+	{{end}}
+
+	dependencies := &{{$classPkg}}.Dependencies{
+		Default: initializedDefaultDependencies,
+		{{- range $className, $moduleInstances := $instance.ResolvedDependencies}}
+		{{$className | pascal}}: &{{$classPkg}}.{{$className | pascal}}Dependencies{
+			{{- range $idy, $subDependency := $moduleInstances}}
+			{{$subDependency.PackageInfo.QualifiedInstanceName}}: initialized{{$className | pascal}}Dependencies.{{$subDependency.PackageInfo.QualifiedInstanceName}},
+			{{- end}}
+		},
+		{{- end}}
+	}
+
+	return tree, dependencies, {{camel $mockDeps}}
+}

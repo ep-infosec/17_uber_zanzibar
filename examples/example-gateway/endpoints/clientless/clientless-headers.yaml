@@ -1,0 +1,16 @@
+clientId:
+clientMethod:
+endpointId: clientless
+endpointType: http
+handleId: clientlessArgWithHeaders
+qpsLevel: 2
+middlewares: []
+reqHeaderMap: {}
+resHeaderMap: {}
+testFixtures: {}
+thriftFile: endpoints/clientless/clientless.thrift
+thriftFileSha: '{{placeholder}}'
+thriftMethodName: Clientless::clientlessArgWithHeaders
+type: http
+workflowType: clientless
+

@@ -1,0 +1,7 @@
+name: echo-gateway
+type: gateway
+config: {}
+dependencies:
+  endpoint:
+  - tchannel/echo
+  - bounce

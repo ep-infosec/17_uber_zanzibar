@@ -1,0 +1,9 @@
+name: bounce
+type: tchannel
+config:
+  endpoints:
+    - ./bounce.yaml
+dependencies:
+  client:
+  - echo
+  - mirror

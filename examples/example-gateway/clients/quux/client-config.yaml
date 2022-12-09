@@ -1,0 +1,13 @@
+config:
+  customImportPath: github.com/uber/zanzibar/examples/example-gateway/clients/quux
+  fixture:
+    importPath: github.com/uber/zanzibar/examples/example-gateway/clients/quux/fixture
+    scenarios:
+      EchoMessage:
+      - success
+      EchoString:
+      - success
+  customInterface: IClient
+dependencies: {}
+name: quux
+type: custom
